@@ -12,6 +12,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
     private var unifiedAsrManager: UnifiedAsrManager?
     private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
     private var cohereRuntime: CohereRuntime?
+    private var cohereLoadingTask: Task<CohereRuntime, Error>?
     private var activeVersion: AsrModelVersion?
     private var activeNemotronModelName: String?
     private var cachedModels: AsrModels?
@@ -30,12 +31,16 @@ class FluidAudioTranscriptionService: TranscriptionService {
         return FluidAudioModelManager.languageHint(from: selectedLanguage, for: model.name)
     }
 
-    private func cleanupLoadedManagers() async {
+    private func cleanupLoadedManagers(preservingCohereRuntime: Bool = false) async {
         await unifiedAsrManager?.cleanup()
         await nemotronAsrManager?.cleanup()
         await asrManager?.cleanup()
 
-        cohereRuntime = nil
+        if !preservingCohereRuntime {
+            cohereLoadingTask?.cancel()
+            cohereLoadingTask = nil
+            cohereRuntime = nil
+        }
         unifiedAsrManager = nil
         nemotronAsrManager = nil
         asrManager = nil
@@ -86,20 +91,49 @@ class FluidAudioTranscriptionService: TranscriptionService {
 
     private func ensureCohereRuntimeLoaded() async throws -> CohereRuntime {
         if let cohereRuntime {
+            logger.debug("Reusing loaded Cohere runtime")
             return cohereRuntime
+        }
+
+        if let cohereLoadingTask {
+            logger.debug("Awaiting existing Cohere model load")
+            return try await cohereLoadingTask.value
         }
 
         await cleanupLoadedManagers()
 
+        // Another caller may have completed loading while cleanup suspended.
+        if let cohereRuntime {
+            return cohereRuntime
+        }
+        if let cohereLoadingTask {
+            return try await cohereLoadingTask.value
+        }
+
         let directory = FluidAudioModelManager.cohereTranscribeCacheDirectory()
-        let models = try await CoherePipeline.loadModels(
-            encoderDir: directory,
-            decoderDir: directory,
-            vocabDir: directory
-        )
-        let runtime = CohereRuntime(pipeline: CoherePipeline(), models: models)
-        self.cohereRuntime = runtime
-        return runtime
+        let loadStart = ContinuousClock.now
+        let task = Task {
+            let models = try await CoherePipeline.loadModels(
+                encoderDir: directory,
+                decoderDir: directory,
+                vocabDir: directory
+            )
+            return CohereRuntime(pipeline: CoherePipeline(), models: models)
+        }
+        cohereLoadingTask = task
+
+        do {
+            let runtime = try await task.value
+            cohereRuntime = runtime
+            cohereLoadingTask = nil
+            logger.notice(
+                "Cohere models loaded in \(loadStart.duration(to: .now).formatted(.units(allowed: [.seconds], width: .narrow)), privacy: .public)"
+            )
+            return runtime
+        } catch {
+            cohereLoadingTask = nil
+            throw error
+        }
     }
 
     // Returns cached models or loads from disk; deduplicates concurrent loads
@@ -169,7 +203,9 @@ class FluidAudioTranscriptionService: TranscriptionService {
         -> String
     {
         if FluidAudioModelManager.isCohereTranscribeModel(named: model.name) {
+            let requestStart = ContinuousClock.now
             let runtime = try await ensureCohereRuntimeLoaded()
+            let modelReadyDuration = requestStart.duration(to: .now)
 
             let compatibleLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(
                 context.language,
@@ -181,6 +217,9 @@ class FluidAudioTranscriptionService: TranscriptionService {
                 audio: speechAudio,
                 models: runtime.models,
                 language: language
+            )
+            logger.notice(
+                "Cohere transcription timings — model ready: \(modelReadyDuration.formatted(.units(allowed: [.seconds], width: .narrow)), privacy: .public), encoder: \(result.encoderSeconds, format: .fixed(precision: 3), privacy: .public)s, decoder: \(result.decoderSeconds, format: .fixed(precision: 3), privacy: .public)s, pipeline: \(result.totalSeconds, format: .fixed(precision: 3), privacy: .public)s"
             )
             return TextNormalizer.shared.normalizeSentence(result.text)
         }
@@ -247,9 +286,10 @@ class FluidAudioTranscriptionService: TranscriptionService {
         try audioConverter.resampleAudioFile(audioURL)
     }
 
-    // Releases ASR resources but preserves cached models for reuse
+    // Release per-session managers, but retain Cohere's expensive Core ML runtime
+    // so normal end-of-transcription cleanup does not prepare it again next time.
     func cleanup() async {
-        await cleanupLoadedManagers()
+        await cleanupLoadedManagers(preservingCohereRuntime: true)
     }
 
 }
