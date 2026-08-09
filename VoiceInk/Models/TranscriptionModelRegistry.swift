@@ -73,6 +73,16 @@ enum TranscriptionModelRegistry {
                 supportsStreaming: true,
                 supportedLanguages: LanguageDictionary.nemotronMultilingual
             ),
+            FluidAudioModel(
+                name: "cohere-transcribe",
+                displayName: "Cohere Transcribe",
+                description: "High-accuracy on-device transcription with support for 14 languages",
+                size: "2.2 GB",
+                speed: 0.65,
+                accuracy: 0.96,
+                ramUsage: 2.5,
+                supportedLanguages: LanguageDictionary.cohereTranscribe
+            ),
 
             // Local Models
             WhisperModel(

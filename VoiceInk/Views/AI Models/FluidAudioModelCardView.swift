@@ -18,9 +18,25 @@ struct FluidAudioModelCardView: View {
         fluidAudioModelManager.isFluidAudioModelDownloading(model)
     }
 
+    var isOptimizing: Bool {
+        fluidAudioModelManager.isFluidAudioModelOptimizing(model)
+    }
+
+    private var isBusy: Bool {
+        isDownloading || isOptimizing
+    }
+
+    private var downloadActionTitle: LocalizedStringKey {
+        if isOptimizing {
+            return "Optimizing..."
+        }
+        return isDownloading ? "Downloading..." : "Download"
+    }
+
     private var showsExperimentalBadge: Bool {
         FluidAudioModelManager.isParakeetUnifiedModel(named: model.name)
             || FluidAudioModelManager.isNemotronModel(named: model.name)
+            || FluidAudioModelManager.isCohereTranscribeModel(named: model.name)
     }
 
     var body: some View {
@@ -115,13 +131,25 @@ struct FluidAudioModelCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 8)
                 .animation(.smooth, value: status.fractionCompleted)
+            } else if isOptimizing {
+                HStack(spacing: 8) {
+                    Text("Optimizing model for your device")
+
+                    ProgressView()
+                        .controlSize(.small)
+
+                    Spacer()
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Color(.secondaryLabelColor))
+                .padding(.top, 8)
             }
         }
     }
 
     private var actionSection: some View {
         HStack(spacing: 8) {
-            if isDownloaded && !isDownloading {
+            if isDownloaded && !isBusy {
                 modelStatusPill("Downloaded", systemImage: "checkmark.circle")
             } else {
                 Button(action: {
@@ -130,7 +158,7 @@ struct FluidAudioModelCardView: View {
                     }
                 }) {
                     HStack(spacing: 4) {
-                        Text(LocalizedStringKey(isDownloading ? "Downloading..." : "Download"))
+                        Text(downloadActionTitle)
                         Image(systemName: "arrow.down.circle")
                     }
                     .font(.system(size: 12, weight: .medium))
@@ -140,10 +168,10 @@ struct FluidAudioModelCardView: View {
                     .background(Capsule().fill(AppTheme.Accent.primary))
                 }
                 .buttonStyle(.plain)
-                .disabled(isDownloading)
+                .disabled(isBusy)
             }
 
-            if isDownloaded && !isDownloading {
+            if isDownloaded && !isBusy {
                 Menu {
                     Button(action: {
                         fluidAudioModelManager.deleteFluidAudioModel(model)

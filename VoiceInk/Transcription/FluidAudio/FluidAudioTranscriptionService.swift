@@ -3,9 +3,15 @@ import Foundation
 import os.log
 
 class FluidAudioTranscriptionService: TranscriptionService {
+    private struct CohereRuntime {
+        let pipeline: CoherePipeline
+        let models: CoherePipeline.LoadedModels
+    }
+
     private var asrManager: AsrManager?
     private var unifiedAsrManager: UnifiedAsrManager?
     private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
+    private var cohereRuntime: CohereRuntime?
     private var activeVersion: AsrModelVersion?
     private var activeNemotronModelName: String?
     private var cachedModels: AsrModels?
@@ -29,6 +35,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
         await nemotronAsrManager?.cleanup()
         await asrManager?.cleanup()
 
+        cohereRuntime = nil
         unifiedAsrManager = nil
         nemotronAsrManager = nil
         asrManager = nil
@@ -77,6 +84,24 @@ class FluidAudioTranscriptionService: TranscriptionService {
         self.activeNemotronModelName = modelName
     }
 
+    private func ensureCohereRuntimeLoaded() async throws -> CohereRuntime {
+        if let cohereRuntime {
+            return cohereRuntime
+        }
+
+        await cleanupLoadedManagers()
+
+        let directory = FluidAudioModelManager.cohereTranscribeCacheDirectory()
+        let models = try await CoherePipeline.loadModels(
+            encoderDir: directory,
+            decoderDir: directory,
+            vocabDir: directory
+        )
+        let runtime = CohereRuntime(pipeline: CoherePipeline(), models: models)
+        self.cohereRuntime = runtime
+        return runtime
+    }
+
     // Returns cached models or loads from disk; deduplicates concurrent loads
     func getOrLoadModels(for version: AsrModelVersion) async throws -> AsrModels {
         if let cached = cachedModels, cached.version == version {
@@ -122,6 +147,11 @@ class FluidAudioTranscriptionService: TranscriptionService {
     }
 
     func loadModel(for model: FluidAudioModel) async throws {
+        if FluidAudioModelManager.isCohereTranscribeModel(named: model.name) {
+            _ = try await ensureCohereRuntimeLoaded()
+            return
+        }
+
         if FluidAudioModelManager.isNemotronModel(named: model.name) {
             // Realtime Nemotron uses a dedicated streaming manager; batch loads lazily in transcribe().
             return
@@ -138,6 +168,23 @@ class FluidAudioTranscriptionService: TranscriptionService {
     func transcribe(audioURL: URL, model: any TranscriptionModel, context: TranscriptionRequestContext) async throws
         -> String
     {
+        if FluidAudioModelManager.isCohereTranscribeModel(named: model.name) {
+            let runtime = try await ensureCohereRuntimeLoaded()
+
+            let compatibleLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(
+                context.language,
+                for: model
+            )
+            let language = FluidAudioModelManager.cohereTranscribeLanguage(from: compatibleLanguage)
+            let speechAudio = try loadAudioSamples(from: audioURL)
+            let result = try await runtime.pipeline.transcribeLong(
+                audio: speechAudio,
+                models: runtime.models,
+                language: language
+            )
+            return TextNormalizer.shared.normalizeSentence(result.text)
+        }
+
         if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
             try await ensureUnifiedModelsLoaded()
             guard let unifiedAsrManager else {

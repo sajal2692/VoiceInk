@@ -21,6 +21,7 @@ class FluidAudioModelManager: ObservableObject {
     @Published private var modelStateRevision = 0
     private var activeDownloadIDs: [String: UUID] = [:]
     private var activeNetworkProgressIDs: [String: UUID] = [:]
+    @Published private var cohereOptimizationState: CohereOptimizationState = .idle
 
     var onModelDeleted: ((String) -> Void)?
     var onModelsChanged: (() -> Void)?
@@ -37,6 +38,13 @@ class FluidAudioModelManager: ObservableObject {
         case parakeet(AsrModelVersion)
         case parakeetUnified
         case nemotron(NemotronVariant)
+        case cohereTranscribe
+    }
+
+    private enum CohereOptimizationState: Equatable {
+        case idle
+        case optimizing
+        case failed
     }
 
     nonisolated static func asrVersion(for modelName: String) -> AsrModelVersion {
@@ -45,6 +53,10 @@ class FluidAudioModelManager: ObservableObject {
 
     nonisolated static func isParakeetUnifiedModel(named modelName: String) -> Bool {
         modelName == "parakeet-unified-0.6b"
+    }
+
+    nonisolated static func isCohereTranscribeModel(named modelName: String) -> Bool {
+        modelName == "cohere-transcribe"
     }
 
     nonisolated static let parakeetUnifiedPrecision: UnifiedEncoderPrecision = .int8
@@ -102,6 +114,10 @@ class FluidAudioModelManager: ObservableObject {
     }
 
     nonisolated private static func modelKind(for modelName: String) -> FluidAudioModelKind {
+        if isCohereTranscribeModel(named: modelName) {
+            return .cohereTranscribe
+        }
+
         if let nemotronVariant = NemotronVariant(modelName: modelName) {
             return .nemotron(nemotronVariant)
         }
@@ -111,6 +127,17 @@ class FluidAudioModelManager: ObservableObject {
         }
 
         return .parakeet(asrVersion(for: modelName))
+    }
+
+    nonisolated static func cohereTranscribeLanguage(from languageCode: String?) -> CohereAsrConfig.Language {
+        let normalized = (languageCode ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: "-")
+            .split(separator: "-")
+            .first
+            .map { String($0).lowercased() }
+
+        return normalized.flatMap(CohereAsrConfig.Language.init(rawValue:)) ?? .english
     }
 
     nonisolated static func nemotronLanguageHint(from languageCode: String?) -> String {
@@ -136,7 +163,8 @@ class FluidAudioModelManager: ObservableObject {
     }
 
     nonisolated static func languageHint(from languageCode: String?, for modelName: String) -> Language? {
-        guard !isParakeetUnifiedModel(named: modelName),
+        guard !isCohereTranscribeModel(named: modelName),
+            !isParakeetUnifiedModel(named: modelName),
             !isNemotronModel(named: modelName),
             asrVersion(for: modelName) == .v3,
             let languageCode,
@@ -152,6 +180,8 @@ class FluidAudioModelManager: ObservableObject {
 
     func isFluidAudioModelDownloaded(named modelName: String) -> Bool {
         switch Self.modelKind(for: modelName) {
+        case .cohereTranscribe:
+            return cohereOptimizationState == .idle && Self.cohereTranscribeRequiredFilesExist()
         case .nemotron(let variant):
             return Self.nemotronRequiredFilesExist(in: Self.nemotronCacheDirectory(for: variant))
         case .parakeetUnified:
@@ -172,6 +202,10 @@ class FluidAudioModelManager: ObservableObject {
         downloadStatuses[model.name] != nil
     }
 
+    func isFluidAudioModelOptimizing(_ model: FluidAudioModel) -> Bool {
+        Self.isCohereTranscribeModel(named: model.name) && cohereOptimizationState == .optimizing
+    }
+
     func downloadStatus(for model: FluidAudioModel) -> FluidAudioDownloadStatus? {
         downloadStatuses[model.name]
     }
@@ -179,12 +213,17 @@ class FluidAudioModelManager: ObservableObject {
     // MARK: - Download
 
     func downloadFluidAudioModel(_ model: FluidAudioModel) async {
-        if isFluidAudioModelDownloaded(model) || isFluidAudioModelDownloading(model) {
+        if isFluidAudioModelDownloaded(model) || isFluidAudioModelDownloading(model)
+            || isFluidAudioModelOptimizing(model)
+        {
             return
         }
 
         let modelName = model.name
         let downloadID = UUID()
+        if Self.isCohereTranscribeModel(named: modelName) {
+            cohereOptimizationState = .idle
+        }
         activeDownloadIDs[modelName] = downloadID
         activeNetworkProgressIDs[modelName] = downloadID
         downloadStatuses[modelName] = FluidAudioDownloadStatus(
@@ -204,6 +243,12 @@ class FluidAudioModelManager: ObservableObject {
 
         do {
             switch Self.modelKind(for: modelName) {
+            case .cohereTranscribe:
+                try await installCohereTranscribe(
+                    modelName: modelName,
+                    downloadID: downloadID,
+                    progressHandler: progressHandler
+                )
             case .parakeetUnified:
                 try await ModelHub.download(
                     .parakeetUnified,
@@ -253,6 +298,43 @@ class FluidAudioModelManager: ObservableObject {
         } catch {
             logger.error("❌ FluidAudio download failed for \(modelName, privacy: .public): \(error, privacy: .public)")
         }
+    }
+
+    private func installCohereTranscribe(
+        modelName: String,
+        downloadID: UUID,
+        progressHandler: @escaping ProgressHandler
+    ) async throws {
+        try await ModelHub.download(
+            .cohereTranscribeCoreml,
+            to: Self.fluidAudioModelsRootDirectory(),
+            progressHandler: Self.downloadOnlyProgressHandler(forwarding: progressHandler)
+        )
+        beginCohereOptimization(for: modelName, downloadID: downloadID)
+
+        do {
+            try await Self.warmUpCohereTranscribeModel()
+            finishCohereOptimization(succeeded: true)
+        } catch {
+            finishCohereOptimization(succeeded: false)
+            throw error
+        }
+    }
+
+    nonisolated private static func warmUpCohereTranscribeModel() async throws {
+        let directory = cohereTranscribeCacheDirectory()
+        let models = try await CoherePipeline.loadModels(
+            encoderDir: directory,
+            decoderDir: directory,
+            vocabDir: directory
+        )
+        let pipeline = CoherePipeline()
+        _ = try await pipeline.transcribe(
+            audio: [Float](repeating: 0, count: CohereAsrConfig.sampleRate),
+            models: models,
+            language: .english,
+            maxNewTokens: 1
+        )
     }
 
     nonisolated private static func optimizeParakeetUnifiedRealtimeModel() async throws {
@@ -327,6 +409,8 @@ class FluidAudioModelManager: ObservableObject {
 
     private func cacheDirectory(for modelName: String) -> URL {
         switch Self.modelKind(for: modelName) {
+        case .cohereTranscribe:
+            return Self.cohereTranscribeCacheDirectory()
         case .nemotron(let variant):
             return Self.nemotronCacheDirectory(for: variant)
         case .parakeetUnified:
@@ -344,6 +428,33 @@ class FluidAudioModelManager: ObservableObject {
         ModelNames.ParakeetUnified.requiredModels(variant: parakeetUnifiedStreamingVariant)
             .union(ModelNames.ParakeetUnified.requiredModels(variant: parakeetUnifiedOfflineVariant))
             .union([parakeetUnifiedStreamingEncoderFile])
+    }
+
+    nonisolated private static var cohereTranscribeRequiredFiles: Set<String> {
+        ModelNames.CohereTranscribe.requiredModels
+    }
+
+    nonisolated private static func cohereTranscribeRequiredFilesExist() -> Bool {
+        let fileManager = FileManager.default
+        let directory = cohereTranscribeCacheDirectory()
+
+        for file in cohereTranscribeRequiredFiles {
+            let fileURL = directory.appendingPathComponent(file)
+            guard fileManager.fileExists(atPath: fileURL.path) else { return false }
+
+            guard file.hasSuffix(".mlmodelc") else { continue }
+            guard fileManager.fileExists(atPath: fileURL.appendingPathComponent("coremldata.bin").path) else {
+                return false
+            }
+
+            if let enumerator = fileManager.enumerator(at: fileURL, includingPropertiesForKeys: nil) {
+                for case let item as URL in enumerator where item.pathExtension == "partial" {
+                    return false
+                }
+            }
+        }
+
+        return true
     }
 
     nonisolated private static func nemotronRequiredFilesExist(in directory: URL) -> Bool {
@@ -377,6 +488,11 @@ class FluidAudioModelManager: ObservableObject {
     nonisolated static func parakeetUnifiedCacheDirectory() -> URL {
         fluidAudioModelsRootDirectory()
             .appendingPathComponent(Repo.parakeetUnified.folderName, isDirectory: true)
+    }
+
+    nonisolated static func cohereTranscribeCacheDirectory() -> URL {
+        fluidAudioModelsRootDirectory()
+            .appendingPathComponent(Repo.cohereTranscribeCoreml.folderName, isDirectory: true)
     }
 
     // Matches the cache root used by FluidAudio's Unified managers.
@@ -416,6 +532,17 @@ class FluidAudioModelManager: ObservableObject {
             message: String(localized: "Optimizing model for your device"),
             isIndeterminate: true
         )
+    }
+
+    private func beginCohereOptimization(for modelName: String, downloadID: UUID) {
+        guard activeDownloadIDs[modelName] == downloadID else { return }
+        activeNetworkProgressIDs[modelName] = nil
+        downloadStatuses[modelName] = nil
+        cohereOptimizationState = .optimizing
+    }
+
+    private func finishCohereOptimization(succeeded: Bool) {
+        cohereOptimizationState = succeeded ? .idle : .failed
     }
 
     private func clearDownloadStatus(for modelName: String, downloadID: UUID) {
