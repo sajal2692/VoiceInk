@@ -3,10 +3,23 @@ import Foundation
 let voiceInkRefineXPCServiceName = "com.prakashjoshipax.VoiceInk.RefineXPC"
 let voiceInkRefineXPCErrorDomain = "com.prakashjoshipax.VoiceInk.RefineXPC"
 
+/// Per-model generation settings. Optional so a request encoded by an older
+/// build still decodes, in which case the engine falls back to its defaults.
+struct VoiceInkRefineGenerationOptions: Codable, Sendable {
+    let temperature: Float?
+    let prefillStepSize: Int?
+
+    init(temperature: Float? = nil, prefillStepSize: Int? = nil) {
+        self.temperature = temperature
+        self.prefillStepSize = prefillStepSize
+    }
+}
+
 struct VoiceInkRefinePrepareRequest: Codable, Sendable {
     let requestID: UUID
     let modelDirectoryPath: String
     let systemPrompt: String
+    let options: VoiceInkRefineGenerationOptions?
 }
 
 struct VoiceInkRefineEnhanceRequest: Codable, Sendable {
@@ -14,6 +27,7 @@ struct VoiceInkRefineEnhanceRequest: Codable, Sendable {
     let modelDirectoryPath: String
     let systemPrompt: String
     let transcript: String
+    let options: VoiceInkRefineGenerationOptions?
 }
 
 struct VoiceInkRefineEnhanceResponse: Codable, Sendable {

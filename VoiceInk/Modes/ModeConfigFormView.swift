@@ -341,7 +341,7 @@ struct ModeConfigFormView: View {
                         {
                             draft.selectedAIModel = warmupSnapshot.selectedModel(for: provider)
                         }
-                        if configuredSelectedAIProvider != .voiceInkRefine,
+                        if !localModelUsesFixedPrompt,
                             draft.selectedPromptId == nil
                         {
                             draft.selectedPromptId = warmupSnapshot.firstPromptId
@@ -393,7 +393,7 @@ struct ModeConfigFormView: View {
                                 draft.selectedAIModel = provider.defaultModel
                             }
 
-                            if provider != .voiceInkRefine,
+                            if !localModelUsesFixedPrompt,
                                 draft.selectedPromptId == nil
                             {
                                 draft.selectedPromptId = warmupSnapshot.firstPromptId
@@ -404,7 +404,7 @@ struct ModeConfigFormView: View {
 
                 if let provider = configuredSelectedAIProvider {
                     aiModelPicker(for: provider)
-                    if provider != .voiceInkRefine {
+                    if !localModelUsesFixedPrompt {
                         promptPicker
                         contextAwarenessRow
                     }
@@ -422,14 +422,6 @@ struct ModeConfigFormView: View {
             }
             .onAppear {
                 draft.selectedAIModel = nil
-            }
-        } else if provider == .voiceInkRefine {
-            LabeledContent("AI Model") {
-                Text(VoiceInkRefineService.modelName)
-                    .foregroundColor(.secondary)
-            }
-            .onAppear {
-                applyVoiceInkRefineRules()
             }
         } else {
             let models = aiModelOptions(for: provider)
@@ -568,7 +560,21 @@ struct ModeConfigFormView: View {
         draft.isAIEnhancementEnabled
             && selectedPrompt != nil
             && configuredSelectedAIProvider != nil
+            // Respond needs multi-turn chat. The on-device path is single-shot
+            // enhancement only — AIChatCompletionService rejects this provider —
+            // so Respond stays unavailable for every local model, including the
+            // instruction-tuned ones that do accept prompts.
             && configuredSelectedAIProvider != .voiceInkRefine
+    }
+
+    /// True only for the cleanup-tuned local model, which ignores prompts,
+    /// context, and the respond output mode. Instruction-tuned local models
+    /// behave like any other provider.
+    private var localModelUsesFixedPrompt: Bool {
+        configuredSelectedAIProvider == .voiceInkRefine
+            && !aiService.voiceInkRefineService.supportsCustomPrompts(
+                modelName: draft.selectedAIModel
+            )
     }
 
     private func applyOutputRules() {
@@ -581,7 +587,13 @@ struct ModeConfigFormView: View {
     }
 
     private func applyVoiceInkRefineRules() {
-        draft.selectedAIModel = VoiceInkRefineService.modelName
+        let installedModels = aiService.voiceInkRefineService.downloadedModelNames
+        if draft.selectedAIModel.map({ !installedModels.contains($0) }) ?? true {
+            draft.selectedAIModel = installedModels.first
+        }
+        if !localModelUsesFixedPrompt, draft.selectedPromptId == nil {
+            draft.selectedPromptId = warmupSnapshot.firstPromptId
+        }
         applyOutputRules()
     }
 

@@ -16,24 +16,27 @@ enum VoiceInkRefineInferenceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailable:
-            return "VoiceInk Refine requires Apple silicon."
+            return "On-device models require Apple silicon."
         case .modelNotLoaded:
-            return "VoiceInk Refine could not load the selected model."
+            return "Could not load the selected on-device model."
         case .emptyOutput:
-            return "VoiceInk Refine returned an empty response."
+            return "The on-device model returned an empty response."
         }
     }
 }
 
 actor VoiceInkRefineInferenceEngine {
     #if arch(arm64)
+        /// Keyed on the model directory alone. The loaded weights do not depend
+        /// on the system prompt, so a Mode using a custom prompt reuses a
+        /// container that was warmed with a different one.
         private struct PreparationIdentity: Equatable {
             let modelDirectoryPath: String
-            let systemPrompt: String
         }
 
         private static let activeCacheLimitBytes = 64 * 1_024 * 1_024
         private static let maximumGenerationTokens = 8_192
+        private static let defaultTemperature: Float = 0.3
 
         private var modelContainer: MLXLMCommon.ModelContainer?
         private var preparationTask: Task<Void, Error>?
@@ -43,12 +46,12 @@ actor VoiceInkRefineInferenceEngine {
 
     func prepare(
         modelDirectory: URL,
-        systemPrompt: String
+        systemPrompt: String,
+        options: VoiceInkRefineGenerationOptions? = nil
     ) async throws {
         #if arch(arm64)
             let requestedIdentity = PreparationIdentity(
-                modelDirectoryPath: modelDirectory.path,
-                systemPrompt: systemPrompt
+                modelDirectoryPath: modelDirectory.path
             )
 
             if isWarmed, preparationIdentity == requestedIdentity {
@@ -69,7 +72,8 @@ actor VoiceInkRefineInferenceEngine {
             let task = Task {
                 try await prepareModel(
                     modelDirectory: modelDirectory,
-                    systemPrompt: systemPrompt
+                    systemPrompt: systemPrompt,
+                    options: options
                 )
             }
             preparationTask = task
@@ -91,7 +95,8 @@ actor VoiceInkRefineInferenceEngine {
     func enhance(
         transcript: String,
         modelDirectory: URL,
-        systemPrompt: String
+        systemPrompt: String,
+        options: VoiceInkRefineGenerationOptions? = nil
     ) async throws -> String {
         #if arch(arm64)
             guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -100,7 +105,8 @@ actor VoiceInkRefineInferenceEngine {
 
             try await prepare(
                 modelDirectory: modelDirectory,
-                systemPrompt: systemPrompt
+                systemPrompt: systemPrompt,
+                options: options
             )
 
             guard let modelContainer else {
@@ -114,7 +120,8 @@ actor VoiceInkRefineInferenceEngine {
             let session = makeSession(
                 using: modelContainer,
                 systemPrompt: systemPrompt,
-                maximumOutputTokens: maximumOutputTokens
+                maximumOutputTokens: maximumOutputTokens,
+                options: options
             )
 
             var output = ""
@@ -184,7 +191,8 @@ actor VoiceInkRefineInferenceEngine {
     #if arch(arm64)
         private func prepareModel(
             modelDirectory: URL,
-            systemPrompt: String
+            systemPrompt: String,
+            options: VoiceInkRefineGenerationOptions?
         ) async throws {
             let container = try await loadContainerIfNeeded(from: modelDirectory)
 
@@ -193,7 +201,8 @@ actor VoiceInkRefineInferenceEngine {
             let warmupSession = makeSession(
                 using: container,
                 systemPrompt: systemPrompt,
-                maximumOutputTokens: 1
+                maximumOutputTokens: 1,
+                options: options
             )
             do {
                 _ = try await warmupSession.respond(to: "Speech")
@@ -227,15 +236,20 @@ actor VoiceInkRefineInferenceEngine {
         private func makeSession(
             using container: MLXLMCommon.ModelContainer,
             systemPrompt: String,
-            maximumOutputTokens: Int
+            maximumOutputTokens: Int,
+            options: VoiceInkRefineGenerationOptions?
         ) -> ChatSession {
-            ChatSession(
+            var generateParameters = GenerateParameters(
+                maxTokens: maximumOutputTokens,
+                temperature: options?.temperature ?? Self.defaultTemperature
+            )
+            // `nil` lets each model architecture pick its own prefill chunk.
+            generateParameters.prefillStepSize = options?.prefillStepSize
+
+            return ChatSession(
                 container,
                 instructions: systemPrompt,
-                generateParameters: GenerateParameters(
-                    maxTokens: maximumOutputTokens,
-                    temperature: 0.3
-                ),
+                generateParameters: generateParameters,
                 additionalContext: ["enable_thinking": false]
             )
         }

@@ -32,7 +32,8 @@ final class VoiceInkRefineXPCService: NSObject, VoiceInkRefineXPCProtocol {
             do {
                 try await engine.prepare(
                     modelDirectory: URL(fileURLWithPath: request.modelDirectoryPath),
-                    systemPrompt: request.systemPrompt
+                    systemPrompt: request.systemPrompt,
+                    options: request.options
                 )
                 reply(nil)
             } catch {
@@ -82,7 +83,8 @@ final class VoiceInkRefineXPCService: NSObject, VoiceInkRefineXPCProtocol {
                 let output = try await engine.enhance(
                     transcript: request.transcript,
                     modelDirectory: URL(fileURLWithPath: request.modelDirectoryPath),
-                    systemPrompt: request.systemPrompt
+                    systemPrompt: request.systemPrompt,
+                    options: request.options
                 )
                 let response = VoiceInkRefineEnhanceResponse(
                     requestID: request.requestID,

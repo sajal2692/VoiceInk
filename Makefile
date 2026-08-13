@@ -18,6 +18,11 @@ check:
 	@command -v git >/dev/null 2>&1 || { echo "git is not installed"; exit 1; }
 	@command -v xcodebuild >/dev/null 2>&1 || { echo "xcodebuild is not installed (need Xcode)"; exit 1; }
 	@command -v swift >/dev/null 2>&1 || { echo "swift is not installed"; exit 1; }
+	@xcrun -f metal >/dev/null 2>&1 || { \
+		echo "The Metal toolchain is missing (MLX compiles Metal shaders)."; \
+		echo "Install it with: xcodebuild -downloadComponent MetalToolchain"; \
+		exit 1; \
+	}
 	@echo "Prerequisites OK"
 
 healthcheck: check
@@ -41,8 +46,12 @@ setup: whisper
 	@echo "Whisper framework is ready at $(FRAMEWORK_PATH)"
 	@echo "Please ensure your Xcode project references the framework from this new location."
 
+# mlx-swift ships a CudaBuild build-tool plugin; command-line builds have no way
+# to approve it interactively, so validation is skipped explicitly.
 build: setup
-	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug CODE_SIGN_IDENTITY="" build
+	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug \
+		-skipPackagePluginValidation \
+		CODE_SIGN_IDENTITY="" build
 
 # Build for local use without Apple Developer certificate
 local: check setup
@@ -51,6 +60,7 @@ local: check setup
 	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug \
 		-derivedDataPath "$(LOCAL_DERIVED_DATA)" \
 		-xcconfig LocalBuild.xcconfig \
+		-skipPackagePluginValidation \
 		CODE_SIGN_IDENTITY="-" \
 		CODE_SIGNING_REQUIRED=NO \
 		CODE_SIGNING_ALLOWED=YES \

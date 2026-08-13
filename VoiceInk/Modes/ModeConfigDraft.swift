@@ -104,11 +104,6 @@ struct ModeConfigDraft {
             return
         }
 
-        if provider == .voiceInkRefine {
-            selectedAIModel = provider.defaultModel
-            return
-        }
-
         let availableModels = snapshot.availableModels(for: provider)
         if let selectedAIModel,
             !selectedAIModel.isEmpty,
@@ -131,7 +126,11 @@ struct ModeConfigDraft {
     }
 
     mutating func ensurePromptSelection(firstPromptId: UUID?) {
-        guard selectedAIProvider != AIProvider.voiceInkRefine.rawValue else {
+        // The cleanup-tuned local model supplies its own prompt; every other
+        // model, local or not, needs one selected.
+        if selectedAIProvider == AIProvider.voiceInkRefine.rawValue,
+            !VoiceInkRefineService.shared.supportsCustomPrompts(modelName: selectedAIModel)
+        {
             return
         }
 

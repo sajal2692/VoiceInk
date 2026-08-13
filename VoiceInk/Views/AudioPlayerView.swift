@@ -537,10 +537,13 @@ struct AudioPlayerView: View {
                 let prompts = enhancementService.allPrompts
                 let customPromptsUnavailable =
                     currentEnhancementConfiguration?.provider == .voiceInkRefine
+                    && !VoiceInkRefineService.shared.supportsCustomPrompts(
+                        modelName: currentEnhancementConfiguration?.modelName
+                    )
                 VStack(alignment: .leading, spacing: 4) {
                     if customPromptsUnavailable {
                         Text(
-                            "Custom prompts aren't available with VoiceInk Refine. Select a Mode that uses another AI provider."
+                            "Custom prompts aren't available with this local model. Select a Mode that uses another model or provider."
                         )
                         .foregroundColor(AppTheme.Text.secondary)
                         .font(.system(size: 12))

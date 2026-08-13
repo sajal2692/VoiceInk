@@ -58,7 +58,13 @@ enum AppDefaults {
 
             // Enhancement
             "SkipShortEnhancement": true,
-            "ShortEnhancementWordThreshold": 3,
+            // Short utterances come back from a local model essentially
+            // unchanged, so the round trip is latency for no edit.
+            "ShortEnhancementWordThreshold": 8,
+            // How long the on-device model stays resident after a dictation.
+            // Reloading multi-gigabyte weights costs several seconds, so the
+            // default trades idle memory for a warm model across a work session.
+            "LocalModelWarmGracePeriodSeconds": 600,
             "EnhancementTimeoutSeconds": 7,
             "EnhancementRetryOnTimeout": true,
 

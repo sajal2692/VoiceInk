@@ -818,7 +818,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 return
             }
 
-            await aiService.voiceInkRefineService.prepareForRecording()
+            await aiService.voiceInkRefineService.prepareForRecording(
+                modelName: configuration.modelName
+            )
         }
     }
 

@@ -67,6 +67,12 @@ enum BackupImporter {
                 }
             }
 
+            // Imported Modes have not been through the load-path migration, so a
+            // backup written by an older build still carries the legacy provider
+            // string. Left alone, AIProvider(rawValue:) returns nil and every
+            // affected Mode silently stops enhancing until the next launch.
+            modeManager.migrateLoadedModeConfigurationsIfNeeded()
+
             modeManager.saveConfigurations()
             shouldRepairModePromptSelections = true
 

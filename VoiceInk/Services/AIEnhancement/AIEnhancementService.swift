@@ -81,7 +81,15 @@ class AIEnhancementService: ObservableObject {
         guard let provider = configuration.provider else { return false }
 
         if provider == .voiceInkRefine {
-            return aiService.voiceInkRefineService.isAvailableInModes
+            guard aiService.voiceInkRefineService.isAvailableInModes else { return false }
+            // Instruction-tuned local models still need a prompt; the
+            // cleanup-tuned model supplies its own.
+            guard aiService.voiceInkRefineService.supportsCustomPrompts(
+                modelName: configuration.modelName
+            ) else {
+                return true
+            }
+            return configuration.prompt != nil
         }
 
         guard configuration.prompt != nil else { return false }
@@ -201,9 +209,18 @@ class AIEnhancementService: ObservableObject {
             return ("", nil, nil)
         }
 
-        if provider == .voiceInkRefine {
+        let usesFixedLocalPrompt =
+            provider == .voiceInkRefine
+            && !aiService.voiceInkRefineService.supportsCustomPrompts(
+                modelName: configuration.modelName
+            )
+
+        if usesFixedLocalPrompt {
             do {
-                let result = try await aiService.enhanceWithVoiceInkRefine(transcript: text)
+                let result = try await aiService.enhanceWithVoiceInkRefine(
+                    transcript: text,
+                    model: configuration.modelName
+                )
                 let filteredResult = AIEnhancementOutputFilter.filter(
                     result.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
@@ -233,6 +250,31 @@ class AIEnhancementService: ObservableObject {
             configuration: configuration,
             contextSnapshot: contextSnapshot
         )
+
+        if provider == .voiceInkRefine {
+            do {
+                let result = try await aiService.enhanceWithVoiceInkRefine(
+                    transcript: formattedText,
+                    model: modelName,
+                    systemPrompt: systemMessage
+                )
+                let filteredResult = AIEnhancementOutputFilter.filter(
+                    result.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                guard !filteredResult.isEmpty else {
+                    throw EnhancementError.enhancementFailed
+                }
+                return (
+                    filteredResult,
+                    systemMessage,
+                    formattedText
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw EnhancementError.customError(error.localizedDescription)
+            }
+        }
 
         if provider == .ollama {
             do {
@@ -566,8 +608,17 @@ class AIEnhancementService: ObservableObject {
 
         for index in updatedConfigurations.indices {
             if updatedConfigurations[index].selectedAIProvider == AIProvider.voiceInkRefine.rawValue {
-                if updatedConfigurations[index].selectedAIModel != VoiceInkRefineService.modelName {
-                    updatedConfigurations[index].selectedAIModel = VoiceInkRefineService.modelName
+                // Repoint Modes whose local model was never installed or has
+                // since been deleted; leave valid selections alone.
+                let selectedModel = updatedConfigurations[index].selectedAIModel
+                let isInstalled = selectedModel.map {
+                    aiService.voiceInkRefineService.downloadedModelNames.contains($0)
+                } ?? false
+                if !isInstalled,
+                    let fallbackModel = aiService.voiceInkRefineService.downloadedModelNames.first,
+                    selectedModel != fallbackModel
+                {
+                    updatedConfigurations[index].selectedAIModel = fallbackModel
                     didUpdateModes = true
                 }
             }

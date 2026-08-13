@@ -243,10 +243,13 @@ struct ModelManagementView: View {
 
     private var localModelsSection: some View {
         VStack(spacing: 12) {
-            VoiceInkRefineModelCardView(
-                service: voiceInkRefineService,
-                deleteAction: confirmDeleteVoiceInkRefineModel
-            )
+            ForEach(voiceInkRefineService.runnableModels) { model in
+                VoiceInkRefineModelCardView(
+                    service: voiceInkRefineService,
+                    model: model,
+                    deleteAction: confirmDeleteVoiceInkRefineModel
+                )
+            }
 
             ForEach(appleSpeechModels, id: \.id) { model in
                 localModelCard(model)
@@ -394,14 +397,17 @@ struct ModelManagementView: View {
         isShowingDeleteAlert = true
     }
 
-    private func confirmDeleteVoiceInkRefineModel() {
-        alertTitle = String(localized: "Delete VoiceInk Refine?")
+    private func confirmDeleteVoiceInkRefineModel(_ model: LocalMLXModel) {
+        alertTitle = String(
+            format: String(localized: "Delete %@?"),
+            model.displayName
+        )
         alertMessage = String(
             localized: "The model will need to be downloaded again before a Mode can use it."
         )
         deleteActionClosure = {
             Task {
-                await voiceInkRefineService.deleteModel()
+                await voiceInkRefineService.deleteModel(model)
             }
         }
         isShowingDeleteAlert = true

@@ -386,7 +386,13 @@ struct ConfigurationRow: View {
                         Image(systemName: "sparkles")
                             .font(.system(size: 10))
                         Text(
+                            // Only the cleanup-tuned local model ignores the
+                            // Mode's prompt; instruction-tuned ones apply it, so
+                            // the prompt title stays visible for those.
                             config.selectedAIProvider == AIProvider.voiceInkRefine.rawValue
+                                && !VoiceInkRefineService.shared.supportsCustomPrompts(
+                                    modelName: config.selectedAIModel
+                                )
                                 ? VoiceInkRefineService.providerName
                                 : selectedPrompt?.title ?? "AI"
                         )

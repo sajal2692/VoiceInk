@@ -15,7 +15,10 @@ enum AIProvider: String, CaseIterable {
     case soniox = "Soniox"
     case speechmatics = "Speechmatics"
     case assemblyAI = "AssemblyAI"
-    case voiceInkRefine = "VoiceInk Refine"
+    // Renamed from "VoiceInk Refine" once this provider began hosting a catalog
+    // of on-device models rather than a single one. `AIService.init` and
+    // `migrateLoadedModeConfigurationsIfNeeded` migrate the stored value.
+    case voiceInkRefine = "On-Device (MLX)"
     case ollama = "Ollama"
     case localCLI = "Local CLI"
     case custom = "Custom"
@@ -150,7 +153,8 @@ enum AIProvider: String, CaseIterable {
         case .assemblyAI:
             return ["universal-3-5-pro"]
         case .voiceInkRefine:
-            return [VoiceInkRefineService.modelName]
+            // Only downloaded models can be selected by a Mode.
+            return VoiceInkRefineService.shared.downloadedModelNames
         case .ollama:
             return []
         case .localCLI:
@@ -262,10 +266,6 @@ class AIService: ObservableObject {
     }
 
     var currentModel: String {
-        if selectedProvider == .voiceInkRefine {
-            return selectedProvider.defaultModel
-        }
-
         if let selectedModel = selectedModels[selectedProvider],
             !selectedModel.isEmpty,
             (selectedProvider == .ollama && !selectedModel.isEmpty) || availableModels.contains(selectedModel)
@@ -276,10 +276,6 @@ class AIService: ObservableObject {
     }
 
     func selectedModel(for provider: AIProvider) -> String {
-        if provider == .voiceInkRefine {
-            return provider.defaultModel
-        }
-
         if let selectedModel = selectedModels[provider], !selectedModel.isEmpty {
             return selectedModel
         }
@@ -313,10 +309,35 @@ class AIService: ObservableObject {
         return provider.availableModels
     }
 
+    /// What `AIProvider.voiceInkRefine` was stored as before it hosted a catalog
+    /// of on-device models. Builds prior to that wrote this string into
+    /// UserDefaults and into every Mode, so both are rewritten on launch.
+    static let legacyLocalProviderRawValue = "VoiceInk Refine"
+
+    static func migrateLegacyLocalProviderKeys(userDefaults: UserDefaults) {
+        let currentRawValue = AIProvider.voiceInkRefine.rawValue
+
+        if userDefaults.string(forKey: "selectedAIProvider") == legacyLocalProviderRawValue {
+            userDefaults.set(currentRawValue, forKey: "selectedAIProvider")
+        }
+
+        // Carry the per-provider model selection over to the new key. The legacy
+        // key is left in place so downgrading still finds it.
+        let legacyModelKey = "\(legacyLocalProviderRawValue)SelectedModel"
+        let currentModelKey = "\(currentRawValue)SelectedModel"
+        if userDefaults.string(forKey: currentModelKey) == nil,
+            let legacyModel = userDefaults.string(forKey: legacyModelKey)
+        {
+            userDefaults.set(legacyModel, forKey: currentModelKey)
+        }
+    }
+
     init() {
         if userDefaults.string(forKey: "selectedAIProvider") == "GROQ" {
             userDefaults.set("Groq", forKey: "selectedAIProvider")
         }
+
+        Self.migrateLegacyLocalProviderKeys(userDefaults: userDefaults)
 
         if let savedProvider = userDefaults.string(forKey: "selectedAIProvider"),
             let provider = AIProvider(rawValue: savedProvider)
@@ -385,9 +406,7 @@ class AIService: ObservableObject {
         }
 
         let selectedModelKey = "\(selectedProvider.rawValue)SelectedModel"
-        if selectedProvider == .voiceInkRefine {
-            selectedModels[selectedProvider] = selectedProvider.defaultModel
-        } else if let savedModel = userDefaults.string(forKey: selectedModelKey), !savedModel.isEmpty {
+        if let savedModel = userDefaults.string(forKey: selectedModelKey), !savedModel.isEmpty {
             selectedModels[selectedProvider] = savedModel
         }
 
@@ -413,11 +432,6 @@ class AIService: ObservableObject {
 
     private func loadSavedModelSelections() {
         for provider in AIProvider.allCases {
-            if provider == .voiceInkRefine {
-                selectedModels[provider] = provider.defaultModel
-                continue
-            }
-
             let key = "\(provider.rawValue)SelectedModel"
             if let savedModel = userDefaults.string(forKey: key), !savedModel.isEmpty {
                 selectedModels[provider] = savedModel
@@ -446,7 +460,7 @@ class AIService: ObservableObject {
             guard CustomAIProviderManager.shared.applyConfiguration(forModel: model) else { return }
         }
 
-        let resolvedModel = provider == .voiceInkRefine ? provider.defaultModel : model
+        let resolvedModel = model
         selectedModels[provider] = resolvedModel
         let key = "\(provider.rawValue)SelectedModel"
         userDefaults.set(resolvedModel, forKey: key)
@@ -656,8 +670,16 @@ class AIService: ObservableObject {
         try await ollamaService.enhance(text, withSystemPrompt: systemPrompt, model: model, timeout: timeout)
     }
 
-    func enhanceWithVoiceInkRefine(transcript: String) async throws -> String {
-        try await voiceInkRefineService.enhance(transcript: transcript)
+    func enhanceWithVoiceInkRefine(
+        transcript: String,
+        model: String? = nil,
+        systemPrompt: String? = nil
+    ) async throws -> String {
+        try await voiceInkRefineService.enhance(
+            transcript: transcript,
+            modelName: model,
+            systemPrompt: systemPrompt
+        )
     }
 
     func updateOllamaBaseURL(_ newURL: String) {

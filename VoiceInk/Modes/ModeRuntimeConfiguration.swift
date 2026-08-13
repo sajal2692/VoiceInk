@@ -152,18 +152,23 @@ enum ModeRuntimeResolver {
             providerName: mode?.selectedAIProvider,
             aiService: aiService
         )
-        let prompt =
-            provider == .voiceInkRefine
-            ? nil
-            : resolvedPrompt(
-                promptId: mode?.selectedPrompt,
-                enhancementService: enhancementService
-            )
         let modelName = resolvedEnhancementModelName(
             provider: provider,
             configuredModelName: mode?.selectedAIModel,
             aiService: aiService
         )
+        // The cleanup-tuned local model takes a fixed prompt and no context.
+        // Instruction-tuned local models behave like any other provider.
+        let usesFixedPrompt =
+            provider == .voiceInkRefine
+            && !aiService.voiceInkRefineService.supportsCustomPrompts(modelName: modelName)
+        let prompt =
+            usesFixedPrompt
+            ? nil
+            : resolvedPrompt(
+                promptId: mode?.selectedPrompt,
+                enhancementService: enhancementService
+            )
 
         return EnhancementRuntimeConfiguration(
             mode: mode,
@@ -171,9 +176,9 @@ enum ModeRuntimeResolver {
             prompt: prompt,
             provider: provider,
             modelName: modelName,
-            useClipboardContext: provider == .voiceInkRefine ? false : mode?.useClipboardContext ?? false,
-            useSelectedTextContext: provider == .voiceInkRefine ? false : mode?.useSelectedTextContext ?? true,
-            useScreenCaptureContext: provider == .voiceInkRefine ? false : mode?.useScreenCapture ?? false
+            useClipboardContext: usesFixedPrompt ? false : mode?.useClipboardContext ?? false,
+            useSelectedTextContext: usesFixedPrompt ? false : mode?.useSelectedTextContext ?? true,
+            useScreenCaptureContext: usesFixedPrompt ? false : mode?.useScreenCapture ?? false
         )
     }
 
@@ -224,10 +229,6 @@ enum ModeRuntimeResolver {
 
         if provider == .localCLI {
             return nil
-        }
-
-        if provider == .voiceInkRefine {
-            return provider.defaultModel
         }
 
         let models = aiService.availableModels(for: provider)

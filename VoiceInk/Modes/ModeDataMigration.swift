@@ -38,10 +38,26 @@ extension ModeManager {
                 changedConfig = true
             }
 
+            // Must run after the fill above, which can copy the legacy provider
+            // string out of UserDefaults when ModeManager loads before AIService
+            // has migrated it. Leaving it would make AIProvider(rawValue:) return
+            // nil and silently disable enhancement for this Mode.
+            if config.selectedAIProvider == AIService.legacyLocalProviderRawValue {
+                config.selectedAIProvider = AIProvider.voiceInkRefine.rawValue
+                changedConfig = true
+            }
+
             if config.selectedAIModel == nil,
                 let provider = config.selectedAIProvider
             {
-                config.selectedAIModel = UserDefaults.standard.string(forKey: "\(provider)SelectedModel")
+                var storedModel = UserDefaults.standard.string(forKey: "\(provider)SelectedModel")
+                if storedModel == nil, provider == AIProvider.voiceInkRefine.rawValue {
+                    // Same ordering hazard: the new per-provider key may not have
+                    // been written yet this launch.
+                    storedModel = UserDefaults.standard.string(
+                        forKey: "\(AIService.legacyLocalProviderRawValue)SelectedModel")
+                }
+                config.selectedAIModel = storedModel
                 changedConfig = true
             }
 

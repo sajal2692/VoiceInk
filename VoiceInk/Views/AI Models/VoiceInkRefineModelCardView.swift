@@ -3,7 +3,16 @@ import SwiftUI
 
 struct VoiceInkRefineModelCardView: View {
     @ObservedObject var service: VoiceInkRefineService
-    let deleteAction: () -> Void
+    let model: LocalMLXModel
+    let deleteAction: (LocalMLXModel) -> Void
+
+    private var isDownloading: Bool {
+        service.isDownloading(model)
+    }
+
+    private var isDownloaded: Bool {
+        service.isDownloaded(model)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -23,16 +32,9 @@ struct VoiceInkRefineModelCardView: View {
 
     private var headerSection: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(VoiceInkRefineService.modelName)
+            Text(model.displayName)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color(.labelColor))
-
-            Text("New")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.black)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color(red: 0.96, green: 0.79, blue: 0.63)))
 
             Spacer()
         }
@@ -40,10 +42,15 @@ struct VoiceInkRefineModelCardView: View {
 
     private var metadataSection: some View {
         HStack(spacing: 12) {
-            Label("Enhancement Model", systemImage: "sparkles")
+            Label(
+                model.supportsCustomPrompts
+                    ? LocalizedStringKey("Prompts & Modes")
+                    : LocalizedStringKey("Cleanup Only"),
+                systemImage: "sparkles"
+            )
             Label("On-Device", systemImage: "checkmark.shield")
             Label {
-                Text(verbatim: VoiceInkRefineService.downloadSizeDescription)
+                Text(verbatim: model.downloadSizeDescription)
             } icon: {
                 Image(systemName: "internaldrive")
             }
@@ -55,13 +62,13 @@ struct VoiceInkRefineModelCardView: View {
 
     private var descriptionSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Cleans up raw transcripts. Processing stays on your Mac.")
+            Text(model.localizedSummary)
                 .font(.system(size: 11))
                 .foregroundColor(Color(.secondaryLabelColor))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let unavailableDescription = service.unavailableDescription {
+            if let unavailableDescription = service.unavailableDescription(for: model) {
                 Text(unavailableDescription)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(AppTheme.Status.warningStrong)
@@ -73,7 +80,7 @@ struct VoiceInkRefineModelCardView: View {
 
     @ViewBuilder
     private var progressSection: some View {
-        if service.isDownloading {
+        if isDownloading {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(downloadDetail)
@@ -100,7 +107,7 @@ struct VoiceInkRefineModelCardView: View {
             .animation(.smooth, value: service.downloadProgress)
         }
 
-        if let downloadError = service.downloadError {
+        if service.failedModelID == model.id, let downloadError = service.downloadError {
             Text(downloadError)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(AppTheme.Status.error)
@@ -111,65 +118,65 @@ struct VoiceInkRefineModelCardView: View {
 
     private var actionSection: some View {
         HStack(spacing: 8) {
-            switch service.availability {
-            case .unsupportedIntel, .insufficientMemory:
+            if !service.canRun(model) {
                 modelStatusPill("Unavailable", systemImage: "exclamationmark.triangle")
-            case .available:
-                if service.isDownloading {
-                    Button("Cancel") {
-                        service.cancelDownload()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                } else if service.isDownloaded {
-                    modelStatusPill("Downloaded", systemImage: "checkmark.circle")
-
-                    Menu {
-                        Button(role: .destructive, action: deleteAction) {
-                            Label("Delete Model", systemImage: "trash")
-                        }
-
-                        Button {
-                            if let modelURL = service.downloadedModelURL {
-                                NSWorkspace.shared.selectFile(
-                                    modelURL.path,
-                                    inFileViewerRootedAtPath: ""
-                                )
-                            }
-                        } label: {
-                            Label("Show in Finder", systemImage: "folder")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 14))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(width: 20, height: 20)
-                } else {
-                    Button {
-                        service.startDownload()
-                    } label: {
-                        HStack(spacing: 4) {
-                            if service.downloadError == nil {
-                                Text("Download")
-                            } else {
-                                Text("Retry")
-                            }
-                            Image(systemName: "arrow.down.circle")
-                        }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(AppTheme.Accent.primary)
-                                .shadow(color: AppTheme.Accent.shadow, radius: 2, x: 0, y: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
+            } else if isDownloading {
+                Button("Cancel") {
+                    service.cancelDownload()
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else if isDownloaded {
+                modelStatusPill("Downloaded", systemImage: "checkmark.circle")
+
+                Menu {
+                    Button(role: .destructive) {
+                        deleteAction(model)
+                    } label: {
+                        Label("Delete Model", systemImage: "trash")
+                    }
+
+                    Button {
+                        if let modelURL = service.downloadedModelURL(for: model) {
+                            NSWorkspace.shared.selectFile(
+                                modelURL.path,
+                                inFileViewerRootedAtPath: ""
+                            )
+                        }
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 20, height: 20)
+            } else {
+                Button {
+                    service.startDownload(model)
+                } label: {
+                    HStack(spacing: 4) {
+                        if service.failedModelID == model.id {
+                            Text("Retry")
+                        } else {
+                            Text("Download")
+                        }
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(AppTheme.Accent.primary)
+                            .shadow(color: AppTheme.Accent.shadow, radius: 2, x: 0, y: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(service.downloadingModelID != nil)
             }
         }
     }

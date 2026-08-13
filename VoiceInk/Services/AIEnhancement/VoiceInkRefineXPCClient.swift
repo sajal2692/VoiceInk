@@ -61,7 +61,14 @@ private enum VoiceInkRefineXPCOperationWaiter {
 }
 
 actor VoiceInkRefineXPCClient {
-    private static let warmGracePeriod: Duration = .seconds(10)
+    /// How long the loaded model survives after the last request before the XPC
+    /// service is shut down. Reloading weights costs seconds, so this is tunable
+    /// via the `LocalModelWarmGracePeriodSeconds` default rather than fixed.
+    private static var warmGracePeriod: Duration {
+        let configured = UserDefaults.standard.integer(
+            forKey: "LocalModelWarmGracePeriodSeconds")
+        return .seconds(configured > 0 ? configured : 600)
+    }
 
     private let logger = Logger(
         subsystem: "com.prakashjoshipax.voiceink",
@@ -75,7 +82,12 @@ actor VoiceInkRefineXPCClient {
     private var idleShutdownTask: Task<Void, Never>?
     private var idleShutdownToken: UUID?
 
-    func prepare(modelDirectory: URL, systemPrompt: String) async throws {
+    func prepare(
+        modelDirectory: URL,
+        systemPrompt: String,
+        temperature: Float? = nil,
+        prefillStepSize: Int? = nil
+    ) async throws {
         try await acquireCancellableOperation()
         defer { releaseOperation() }
 
@@ -85,7 +97,11 @@ actor VoiceInkRefineXPCClient {
         let request = VoiceInkRefinePrepareRequest(
             requestID: UUID(),
             modelDirectoryPath: modelDirectory.path,
-            systemPrompt: systemPrompt
+            systemPrompt: systemPrompt,
+            options: VoiceInkRefineGenerationOptions(
+                temperature: temperature,
+                prefillStepSize: prefillStepSize
+            )
         )
         let requestData = try JSONEncoder().encode(request)
         let activeConnection = connectionForRequest()
@@ -137,7 +153,9 @@ actor VoiceInkRefineXPCClient {
     func enhance(
         transcript: String,
         modelDirectory: URL,
-        systemPrompt: String
+        systemPrompt: String,
+        temperature: Float? = nil,
+        prefillStepSize: Int? = nil
     ) async throws -> String {
         try await acquireCancellableOperation()
         defer { releaseOperation() }
@@ -149,7 +167,11 @@ actor VoiceInkRefineXPCClient {
             requestID: UUID(),
             modelDirectoryPath: modelDirectory.path,
             systemPrompt: systemPrompt,
-            transcript: transcript
+            transcript: transcript,
+            options: VoiceInkRefineGenerationOptions(
+                temperature: temperature,
+                prefillStepSize: prefillStepSize
+            )
         )
         let requestData = try JSONEncoder().encode(request)
         let activeConnection = connectionForRequest()
@@ -431,20 +453,20 @@ actor VoiceInkRefineXPCClient {
         let description: String
         switch code {
         case .invalidRequest:
-            description = String(localized: "VoiceInk Refine received an invalid request.")
+            description = String(localized: "The on-device model received an invalid request.")
         case .inferenceFailed:
             switch operation {
             case .prepare:
-                description = String(localized: "VoiceInk Refine could not prepare the model.")
+                description = String(localized: "Could not prepare the on-device model.")
             case .enhance:
                 description = String(
-                    localized: "VoiceInk Refine could not complete the enhancement."
+                    localized: "The on-device model could not complete the enhancement."
                 )
             }
         case .invalidResponse:
-            description = String(localized: "VoiceInk Refine returned an invalid response.")
+            description = String(localized: "The on-device model returned an invalid response.")
         case .connectionFailed:
-            description = String(localized: "Could not communicate with VoiceInk Refine.")
+            description = String(localized: "Could not communicate with the on-device model service.")
         }
 
         return makeVoiceInkRefineXPCError(code, description: description)
