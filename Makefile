@@ -4,6 +4,14 @@ WHISPER_CPP_DIR := $(DEPS_DIR)/whisper.cpp
 FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 
+# Ad-hoc signing makes the designated requirement a plain cdhash, so it changes
+# on every rebuild and macOS discards the app's Accessibility grant and keychain
+# items each time. Signing with a stable self-signed certificate keeps the
+# requirement pinned to the certificate instead, so permissions survive.
+# Create one in Keychain Access (Certificate Assistant, type "Code Signing"),
+# or override this with an identity you already have.
+LOCAL_SIGN_IDENTITY ?= VoiceInk Local Signing
+
 .PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup
 
 # Default target
@@ -61,7 +69,7 @@ local: check setup
 		-derivedDataPath "$(LOCAL_DERIVED_DATA)" \
 		-xcconfig LocalBuild.xcconfig \
 		-skipPackagePluginValidation \
-		CODE_SIGN_IDENTITY="-" \
+		CODE_SIGN_IDENTITY="$(LOCAL_SIGN_IDENTITY)" \
 		CODE_SIGNING_REQUIRED=NO \
 		CODE_SIGNING_ALLOWED=YES \
 		DEVELOPMENT_TEAM="" \
@@ -70,6 +78,19 @@ local: check setup
 		build
 	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/Debug/VoiceInk.app" && \
 	if [ -d "$$APP_PATH" ]; then \
+		if security find-identity -p codesigning 2>/dev/null | grep -q "$(LOCAL_SIGN_IDENTITY)"; then \
+			echo "Signing with '$(LOCAL_SIGN_IDENTITY)'..."; \
+			codesign --force --sign "$(LOCAL_SIGN_IDENTITY)" \
+				"$$APP_PATH/Contents/XPCServices/VoiceInkRefineXPC.xpc" >/dev/null 2>&1; \
+			codesign --force --sign "$(LOCAL_SIGN_IDENTITY)" \
+				--entitlements "$(CURDIR)/VoiceInk/VoiceInk.local.entitlements" \
+				"$$APP_PATH" >/dev/null 2>&1; \
+		else \
+			echo "Note: '$(LOCAL_SIGN_IDENTITY)' not found; leaving the ad-hoc signature in place."; \
+			echo "      macOS will drop this app's Accessibility grant and keychain items on"; \
+			echo "      every rebuild. Create a Code Signing certificate with that name in"; \
+			echo "      Keychain Access to keep them, or set LOCAL_SIGN_IDENTITY."; \
+		fi; \
 		echo "Copying VoiceInk.app to ~/Downloads..."; \
 		rm -rf "$$HOME/Downloads/VoiceInk.app"; \
 		ditto "$$APP_PATH" "$$HOME/Downloads/VoiceInk.app"; \
