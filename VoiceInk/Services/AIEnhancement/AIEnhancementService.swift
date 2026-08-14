@@ -187,7 +187,12 @@ class AIEnhancementService: ObservableObject {
                 ""
             }
 
-        return [prompt.finalPromptText, customVocabularySection, contextSection]
+        let systemInstructions = prompt.finalPromptText(
+            includesVocabulary: !customVocabularySection.isEmpty,
+            includesContext: !contextSection.isEmpty
+        )
+
+        return [systemInstructions, customVocabularySection, contextSection]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }

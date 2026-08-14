@@ -40,11 +40,23 @@ struct CustomPrompt: Identifiable, Codable, Equatable {
     }
 
     var finalPromptText: String {
-        if useSystemInstructions {
-            return String(format: AIPrompts.enhancementSystemTemplate, self.promptText)
-        } else {
-            return self.promptText
-        }
+        finalPromptText(includesVocabulary: true, includesContext: true)
+    }
+
+    /// - Parameters:
+    ///   - includesVocabulary: whether a `<CUSTOM_VOCABULARY>` block will follow.
+    ///   - includesContext: whether any context block will follow.
+    ///
+    /// Passing `false` drops the rules describing tags that will not be present,
+    /// which is a pure prefill saving with no change in behavior.
+    func finalPromptText(includesVocabulary: Bool, includesContext: Bool) -> String {
+        guard useSystemInstructions else { return promptText }
+
+        return AIPrompts.enhancementSystemPrompt(
+            taskInstructions: promptText,
+            includesVocabulary: includesVocabulary,
+            includesContext: includesContext
+        )
     }
 }
 
