@@ -70,6 +70,7 @@ struct ModeConfigFormView: View {
             footer
         }
         .onAppear {
+            persistResolvedProviderIfNeeded()
             applyVoiceInkRefineRulesIfNeeded()
             applyOutputRules()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -579,6 +580,21 @@ struct ModeConfigFormView: View {
 
     private func applyOutputRules() {
         draft.applyOutputRules(canRespond: canRespond)
+    }
+
+    /// The provider picker displays `connectedProviders.first` when a Mode has
+    /// no provider stored, but only writes to the draft when the user changes
+    /// it. A Mode configured without touching that picker was saved with no
+    /// provider at all, and then ran against whichever provider happened to be
+    /// first at dictation time. Persist what the form is already showing.
+    private func persistResolvedProviderIfNeeded() {
+        guard draft.selectedAIProvider == nil,
+            let resolvedProvider = configuredSelectedAIProvider
+        else {
+            return
+        }
+
+        draft.selectedAIProvider = resolvedProvider.rawValue
     }
 
     private func applyVoiceInkRefineRulesIfNeeded() {
