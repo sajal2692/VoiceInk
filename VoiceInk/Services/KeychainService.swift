@@ -198,12 +198,20 @@ final class KeychainService {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
-            kSecUseDataProtectionKeychain as String: true,
         ]
 
-        if syncable {
-            query[kSecAttrSynchronizable as String] = kCFBooleanTrue
-        }
+        #if !LOCAL_BUILD
+            // The data-protection keychain and iCloud sync both require a
+            // keychain access group, which comes from a provisioning profile.
+            // Locally built, ad-hoc signed copies have no such entitlement and
+            // every query fails with errSecMissingEntitlement, so those builds
+            // use the file-based keychain instead.
+            query[kSecUseDataProtectionKeychain as String] = true
+
+            if syncable {
+                query[kSecAttrSynchronizable as String] = kCFBooleanTrue
+            }
+        #endif
 
         return query
     }

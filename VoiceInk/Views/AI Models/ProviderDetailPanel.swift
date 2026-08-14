@@ -475,7 +475,23 @@ struct ProviderDetailPanel: View {
                 verificationSucceeded = result.isValid
 
                 if result.isValid {
-                    APIKeyManager.shared.saveAPIKey(trimmedKey, forProvider: descriptor.providerKey)
+                    // A rejected keychain write used to be discarded here, which
+                    // cleared the field and looked identical to success while
+                    // leaving the provider unusable.
+                    guard
+                        APIKeyManager.shared.saveAPIKey(
+                            trimmedKey, forProvider: descriptor.providerKey)
+                    else {
+                        verificationSucceeded = false
+                        verificationMessage = String(
+                            localized: "This key is valid but could not be saved to the keychain.")
+                        verificationDetailMessage = String(
+                            localized:
+                                "Keychain access was denied. A locally built copy of VoiceInk needs to be signed to store API keys."
+                        )
+                        return
+                    }
+
                     if let provider = descriptor.aiProvider, aiService.selectedProvider == provider {
                         aiService.apiKey = trimmedKey
                         aiService.isAPIKeyValid = true
