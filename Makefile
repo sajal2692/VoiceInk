@@ -59,6 +59,7 @@ setup: whisper
 build: setup
 	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug \
 		-skipPackagePluginValidation \
+		-skipMacroValidation \
 		CODE_SIGN_IDENTITY="" build
 
 # Build for local use without Apple Developer certificate
@@ -69,6 +70,7 @@ local: check setup
 		-derivedDataPath "$(LOCAL_DERIVED_DATA)" \
 		-xcconfig LocalBuild.xcconfig \
 		-skipPackagePluginValidation \
+		-skipMacroValidation \
 		CODE_SIGN_IDENTITY="$(LOCAL_SIGN_IDENTITY)" \
 		CODE_SIGNING_REQUIRED=NO \
 		CODE_SIGNING_ALLOWED=YES \
