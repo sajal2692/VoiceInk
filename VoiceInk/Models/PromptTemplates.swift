@@ -37,11 +37,11 @@ enum PromptTemplates {
                 id: defaultPromptId,
                 title: "Default",
                 promptText: """
-                    Polish the dictated speech in <TRANSCRIPT> into clean, general-purpose text.
+                    Present the cleaned-up dictated speech as general-purpose written text.
 
                     # Rules
                     - Use readable paragraphs and conventional abbreviations when helpful.
-                    - Prefer a clean, neutral style unless the dictated speech clearly implies a different tone.
+                    - Keep the user's own voice and tone. Do not neutralize, formalize, or condense how they speak.
                     """,
                 useSystemInstructions: true
             ),
