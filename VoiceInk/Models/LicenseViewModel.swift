@@ -451,6 +451,12 @@ final class LicenseViewModel: ObservableObject {
     }
 
     private func resolvedState(at date: Date) -> LicenseState {
+        #if LOCAL_BUILD
+            // Local builds are not distributed, so there is nothing to license and
+            // no trial to run. Reporting `.licensed` keeps every downstream check
+            // (the dashboard banner, the transcript upsell, `canUseApp`) inert.
+            return .licensed
+        #else
         if storedLicenseKey != nil,
             activationId != nil || !requiresActivation
         {
@@ -469,6 +475,7 @@ final class LicenseViewModel: ObservableObject {
         }
 
         return .trial(daysRemaining: min(trialPeriodDays, trialPeriodDays - daysSinceTrialStart))
+        #endif
     }
 
     private func scheduleStorageRetryIfNeeded() {
@@ -496,6 +503,10 @@ final class LicenseViewModel: ObservableObject {
         stateRefreshTask?.cancel()
         stateRefreshTask = nil
 
+        #if LOCAL_BUILD
+            // The state is fixed at `.licensed`, so there is no day boundary to wake for.
+            return
+        #else
         guard automaticallyRefreshesTime,
             storedLicenseKey == nil,
             let trialStartDate,
@@ -529,6 +540,7 @@ final class LicenseViewModel: ObservableObject {
 
             self?.refreshTimeDependentState()
         }
+        #endif
     }
 
     private func handlePendingRemovalFailure() {

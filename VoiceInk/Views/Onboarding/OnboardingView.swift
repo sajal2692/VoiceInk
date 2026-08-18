@@ -167,7 +167,9 @@ struct OnboardingView: View {
                         onContinue: {
                             coordinator.flow.goToLicenseStep(
                                 isTranscriptionSetupReady: isTranscriptionSetupReady
-                            )
+                            ) {
+                                hasCompletedOnboardingV2 = true
+                            }
                         }
                     )
                     .transition(.opacity)

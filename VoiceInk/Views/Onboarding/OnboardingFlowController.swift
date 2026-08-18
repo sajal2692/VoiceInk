@@ -55,9 +55,22 @@ final class OnboardingFlowController {
         moveToExperienceStep(0, enhancementService: enhancementService)
     }
 
-    func goToLicenseStep(isTranscriptionSetupReady: Bool) {
+    /// Local builds are always licensed, so there is no license stage to show and
+    /// the trust step becomes the last one.
+    func goToLicenseStep(
+        isTranscriptionSetupReady: Bool,
+        onComplete: () -> Void
+    ) {
         guard coordinator.isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else { return }
-        coordinator.storedStage = OnboardingStage.license.rawValue
+
+        #if LOCAL_BUILD
+            completeOnboarding(
+                isTranscriptionSetupReady: isTranscriptionSetupReady,
+                onComplete: onComplete
+            )
+        #else
+            coordinator.storedStage = OnboardingStage.license.rawValue
+        #endif
     }
 
     func goToContextAwarenessStep(isTranscriptionSetupReady: Bool) {
@@ -344,8 +357,15 @@ final class OnboardingFlowController {
         isTranscriptionSetupReady: Bool,
         onComplete: () -> Void
     ) {
+        #if LOCAL_BUILD
+            // Trust is the final stage here, because the license stage is skipped.
+            let isOnFinalStage = coordinator.stage == .license || coordinator.stage == .trust
+        #else
+            let isOnFinalStage = coordinator.stage == .license
+        #endif
+
         guard
-            coordinator.stage == .license
+            isOnFinalStage
                 || coordinator.isCurrentExperienceReady(isTranscriptionSetupReady: isTranscriptionSetupReady)
         else {
             return

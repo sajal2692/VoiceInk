@@ -138,7 +138,14 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var totalStepCount: Int {
-        OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 2
+        // Local builds skip the license stage, so trust is the last step counted.
+        #if LOCAL_BUILD
+            let trailingStepCount = 1
+        #else
+            let trailingStepCount = 2
+        #endif
+        return OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount
+            + trailingStepCount
     }
 
     var experienceStep: OnboardingExperienceStep {
